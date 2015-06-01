@@ -1,10 +1,12 @@
 ;;; jst-mode.el --- JS test mode
 
-;; Copyright (C) 2015  Kai Yu
+;; Copyright (C) 2015 Cheung Hoi Yu
 
-;; Author: Kai Yu <yeannylam@gmail.com>
+;; Author: Cheung Hoi Yu <yeannylam@gmail.com>
 ;; Version: 0.0.1
 ;; Keywords: js, javascript, jasmine, coffee, coffeescript
+;; Package-Requires: ((s "1.9") (f "0.17") (dash "2.10") (pcache "0.3"))
+;; URL: https://github.com/cheunghy/jst-mode
 
 ;; This file is not part of GNU Emacs.
 
@@ -28,10 +30,10 @@
 
 ;;; Code:
 
-(add-to-list 'load-path (file-name-directory (or load-file-name (buffer-file-name))))
-(require 'jst-project)
-(require 'jst-guessing)
-(require 'jst-util)
+(require 'pcache)
+(require 'dash)
+(require 's)
+(require 'f)
 
 (defgroup jst nil
   "jst mode"
@@ -39,10 +41,12 @@
   :group 'applications)
 
 (defcustom jst-keymap-prefix (kbd "C-c t")
-  "The prefix for all testing related key commands."
+  "The prefix for all javaScript testing related key commands."
   :type 'string
   :group 'jst)
 
+;; This is currently unused actually
+;; Unless pcache support custom persistent location for repository
 (defcustom jst-cache-info-file (convert-standard-filename "~/.emacs.d/.jst")
   "Default target for storing jst project informatin and type information."
   :group 'jst
@@ -50,20 +54,10 @@
           (const :tag "Default value is ~/.emacs.d/.jst" nil)
           file))
 
-(defvar jst-possible-project-root-landmark
-  '(".karma" "package.json" "node_modules" ".git" "Gemfile" "Rakefile"
-    "bower.json" "Gruntfile.js")
-  "The file implies the project root.")
-
-(defvar jst-project-type-characteristic-alist
-  '(("rails" . ("config.ru" "Gemfile" "app" "public" "app/controllers" "app/assets"))
-    ("node" . ("package.json" "node_modules" "Gruntfile.js" "bower.json"))
-    ("angular" . ("unknown yet")) ;; TODO
-    ("ember" . ("unknown yet")) ;; TODO
-    ))
-
-(defvar jst-possible-test-or-spec-dir-names
-  '("spec" "test" "Spec" "Test"))
+(defcustom jst-project-config-file ".jst.el"
+  "The file to dominate a jst project."
+  :type 'string
+  :group 'jst)
 
 (defvar jst-known-langs-and-exts (make-hash-table :test 'equal)
   "An hash table records known languages and extensions,
@@ -74,6 +68,22 @@ values are list of extensions such as ('ls').")
 (defvar jst-known-spec-file-patterns '()
   "An list records the global spec file patterns.")
 
+(defvar jst-known-spec-dir-patterns '()
+  "An list records the global spec dir patterns.")
+
+(defvar jst-known-project-types (make-hash-table :test 'equal)
+  "An hash table records known project types, keys are type
+such as \"rails\", values are an complicated object.")
+
+(defvar jst-known-dominating-files '()
+  "An list of files that implies project root directory.")
+
+(defvar jst-known-projects (make-hash-table :test 'equal)
+  "A hash table records all the projects.")
+
+(defvar jst-pcache-repo (pcache-repository "jst")
+  "The pcache-repository object used by jst.")
+
 (defun jst-remember-language (&rest args)
   "Let JST remember another language."
   (let (label value lang ext)
@@ -82,21 +92,163 @@ values are list of extensions such as ('ls').")
       (setq value (pop args))
       (and (equal :extension label) (setq ext value))
       (and (equal :name label) (setq lang value)))
-    (if (gethash value jst-known-langs-and-exts)
-        (push ext (gethash value jst-known-langs-and-exts))
+    (if (gethash lang jst-known-langs-and-exts)
+        (push ext (gethash lang jst-known-langs-and-exts))
       (puthash lang (list ext) jst-known-langs-and-exts))) nil)
-
-(jst-remember-language :extension "js" :name "JavaScript")
-(jst-remember-language :extension "es6" :name "ECMA6")
-(jst-remember-language :extension "ts" :name "TypeScript")
-(jst-remember-language :extension "coffee" :name "CoffeeScript")
-(jst-remember-language :extension "ls" :name "LiveScript")
 
 (defun jst-remember-spec-file-pattern (pattern)
   "Let JST know another spec file pattern."
   (push pattern jst-known-spec-file-patterns))
 
-(jst-remember-spec-file-pattern "^.+?[_]?\\([sS]pec\\|[tT]est\\)\\.")
+(defun jst-remember-spec-dir-pattern (pattern)
+  "Let JST know another spec dir pattern."
+  (push pattern jst-known-spec-dir-patterns))
+
+(defun jst-remember-project-type (type &rest args)
+  "Let JST remember another project type."
+  (let (label value testing-framework spec-dir config-file source-dir
+              command-ci command-browser spec-to-target target-to-spec
+              dominating-files table)
+    (while (not (= 0 (length args)))
+      (setq label (pop args))
+      (setq value (pop args))
+      (and (equal :testing-framework label) (setq testing-framework value))
+      (and (equal :spec-dir label) (setq spec-dir value))
+      (and (equal :config-file label) (setq config-file value))
+      (and (equal :source-dir label) (setq source-dir value))
+      (and (equal :command-ci label) (setq command-ci value))
+      (and (equal :command-browser label) (setq command-browser value))
+      (and (equal :spec-to-target label) (setq spec-to-target value))
+      (and (equal :target-to-spec label) (setq target-to-spec value))
+      (and (equal :dominating-files label) (setq dominating-files value)))
+    (if (gethash type jst-known-project-types)
+        (error "Redefined JST project type.")
+      (setq table (make-hash-table :test 'equal))
+      (puthash :testing-framework testing-framework table)
+      (puthash :spec-dir spec-dir table)
+      (puthash :config-file config-file table)
+      (puthash :source-dir spec-dir table)
+      (puthash :command-ci command-ci table)
+      (puthash :command-browser command-browser table)
+      (puthash :spec-to-target spec-to-target table)
+      (puthash :target-to-spec target-to-spec table)
+      (puthash :dominating-files dominating-files table)
+      (puthash type table jst-known-project-types))) nil)
+
+(defun jst-query-project-type (type &optional key)
+  "Query JST for project type. If KEY is not specified,
+return a hash, if KEY is specified, return a value."
+  (catch 'found-it
+    (let ((table (gethash type jst-known-project-types)))
+      (unless key (throw 'found-it table))
+      (and table (gethash key table)))))
+
+(defun jst-query-project-type-all (key)
+  "Return a list of values specified by KEY."
+  (let ((ret-val '()))
+    (maphash (lambda (proj-type proj-hash)
+               (push (gethash key proj-hash) ret-val)
+               ) jst-known-project-types)
+    (-uniq (-remove-item nil ret-val))))
+
+(defun jst-remember-dominating-file (name)
+  "Let JST know another spec dir pattern."
+  (push name jst-known-dominating-files))
+
+(defun jst-serialize-projects ()
+  "Serialize loaded projects."
+  (pcache-put jst-pcache-repo 'projects jst-known-projects))
+
+(defun jst-unserialize-projects ()
+  "Unserialize projects and set `jst-known-projects'."
+  (setq jst-known-projects (pcache-get jst-pcache-repo 'projects)))
+
+(defun jst-remember-project (root &rest args)
+  "Let JST remember another project."
+  (let (label value type testing-framework spec-dir config-file source-dir
+              command-ci command-browser spec-to-target target-to-spec
+              table)
+    (while (not (= 0 (length args)))
+      (setq label (pop args))
+      (setq value (pop args))
+      (and (equal :type label) (setq type value))
+      (and (equal :testing-framework label) (setq testing-framework value))
+      (and (equal :spec-dir label) (setq spec-dir value))
+      (and (equal :config-file label) (setq config-file value))
+      (and (equal :source-dir label) (setq source-dir value))
+      (and (equal :command-ci label) (setq command-ci value))
+      (and (equal :command-browser label) (setq command-browser value))
+      (and (equal :spec-to-target label) (setq spec-to-target value))
+      (and (equal :target-to-spec label) (setq target-to-spec value)))
+    (if (gethash root jst-known-projects)
+        (error "Redefined JST project.")
+      (setq table (make-hash-table :test 'equal))
+      (puthash :type type table)
+      (puthash :testing-framework testing-framework table)
+      (puthash :spec-dir spec-dir table)
+      (puthash :config-file config-file table)
+      (puthash :source-dir spec-dir table)
+      (puthash :command-ci command-ci table)
+      (puthash :command-browser command-browser table)
+      (puthash :spec-to-target spec-to-target table)
+      (puthash :target-to-spec target-to-spec table)
+      (puthash root table jst-known-projects))) nil)
+
+(defun jst-declare-project (&rest args)
+  "This function is aim to be used in project root directory.
+Sorry for my poor English. Help me improve the words and grammar."
+  (apply 'jst-remember-project (file-name-directory load-file-name) args))
+
+(defun jst-query-project (root &optional key)
+  "Query project with a ROOT directory path."
+  (catch 'found-it
+    (let ((table (gethash root jst-known-projects)))
+      (unless key (throw 'found-it (jst-complete-project-info table)))
+      (and table (jst-query-project-key table key)))))
+
+(defun jst-query-project-for-file (file-name &optional key)
+  "Query project with a file name."
+  (jst-query-project (jst-query-project-root-for-file file-name) key))
+
+(defun jst-project-root-for-project (proj)
+  "Return proj root dir of PROJ hash."
+  (jst-hashkey proj jst-known-projects))
+
+(defun jst-hashkey (value hash)
+  "Return key of VALUE in HASH. nil if not found."
+  (catch 'found-it
+    (dolist (key (hash-table-keys hash))
+      (if (equal (gethash key hash) value)
+          (throw 'found-it key)))))
+
+(defun jst-complete-project-info (proj)
+  "Given a project table, complete it with default project type settings."
+  (catch 'return
+    (unless proj (throw 'return proj))
+    (unless (gethash "type" proj) (throw 'return proj))
+    (let* ((typen (gethash "type" proj))
+           (typed (gethash typen jst-known-project-types))
+           (proj (copy-hash-table proj)))
+      (maphash (lambda (key value)
+                 (unless (gethash key proj)
+                   (puthash key value proj))
+                 ) typed))) proj)
+
+(defun jst-query-project-key (proj key)
+  "Return key's value of project, type is being considerated."
+  (catch 'return
+    (unless proj (throw 'return nil))
+    (if (gethash key proj) (throw 'return (gethash key proj)))
+    (unless (gethash "type" proj) (throw 'return nil))
+    (gethash key (gethash "type" proj))))
+
+(defun jst-query-project-root-for-file (file-name)
+  "Return project root for given FILE-NAME.
+FILE-NAME should be complete."
+  (catch 'found-it
+    (dolist (proj-root (hash-table-keys jst-known-projects))
+      (and (s-contains? proj-root file-name)
+           (throw 'found-it proj-root)))))
 
 (defun jst-all-reasonable-exts ()
   "Return a list of all reasonable exts."
@@ -104,7 +256,7 @@ values are list of extensions such as ('ls').")
 
 (defun jst-file-is-js (file-name)
   "Return t if file is js."
-  (-contains? (jst-all-reasonable-exts) (file-name-extension file-name)))
+  (-contains? (jst-all-reasonable-exts) (f-ext file-name)))
 
 (defun jst-file-is-spec (file-name)
   "Return t if file is js and spec."
@@ -118,8 +270,6 @@ values are list of extensions such as ('ls').")
         (if (numberp (string-match rex base-name))
             (throw 'found-it t))))))
 
-
-
 (defun jst-buffer-is-js (&optional buffer)
   "Return t if buffer is js."
   (setq buffer (or buffer (current-buffer)))
@@ -130,22 +280,272 @@ values are list of extensions such as ('ls').")
   (setq buffer (or buffer (current-buffer)))
   (jst-file-is-spec (buffer-file-name buffer)))
 
+(defun jst-enforce-project-of-file (file-name)
+  "Figure out project of file and return the project."
+  (or (jst-query-project-for-file file-name)
+      (jst-load-project (jst-root-project-dir-for-file file-name))
+      (jst-register-project (jst-root-project-dir-for-file file-name))))
+
+(defalias 'jst-project-of-file 'jst-enforce-project-of-file)
+
+(defun jst-load-project (root-dir)
+  "Load a user defined project in ROOT-DIR.
+Return the project if it is defined. Return nil if not defined."
+  (if (f-exists? (f-expand jst-project-config-file root-dir))
+      (load (f-expand jst-project-config-file root-dir)))
+  (jst-query-project root-dir))
+
+(defun jst-register-project (root-dir)
+  "Register project."
+  (let (type spec-dir)
+    (setq type (jst-type-of-project root-dir))
+    (or (jst-query-project-type type :spec-dir)
+        (setq spec-dir (jst-spec-dir-of-root-dir root-dir)))
+    (jst-remember-project root-dir :type type :spec-dir spec-dir)
+    (jst-query-project root-dir)))
+
+(defun jst-spec-dir-of-root-dir (root-dir)
+  "Figure out spec dir given root dir of a project. And it's type is known."
+  (let (matched-dirs)
+    (setq
+     matched-dirs
+     (f-directories root-dir (lambda (dir-name)
+                               (-find (lambda (pattern)
+                                        (string-match pattern dir-name))
+                                      jst-known-spec-dir-patterns)) t))
+    (-min-by (lambda (a b) (> (jst-path-depth a) (jst-path-depth b))) matched-dirs)))
+
+(defun jst-file-base-name (file-name)
+  "Return file base name without all exts."
+  (setq file-name (replace-regexp-in-string ".*/" "" file-name))
+  (replace-regexp-in-string "\\..*" "" file-name))
+
+(defun jst-file-pure-base-name (file-name)
+  "Return file base name even without spec or test part."
+  (setq file-name (file-name-nondirectory file-name))
+  (dolist (pattern jst-known-spec-file-patterns)
+    (let ((match (nth 1 (s-match pattern file-name))))
+      (if match (setq file-name (s-replace match "" file-name)))))
+  (jst-file-base-name file-name))
+
+(defun jst-locate-dominating-file (path file-name-or-list &optional with-file)
+  "This is similar to `locate-dominating-file' but accepts a list
+of arguments and can return with the file."
+  (setq file-name-or-list (-flatten file-name-or-list))
+  (let (d-f-p)
+    (catch 'found-it
+      (dolist (file-name file-name-or-list)
+        (if (setq d-f-p
+                  (locate-dominating-file path file-name))
+            (if with-file
+                (throw 'found-it (expand-file-name file-name d-f-p))
+              (throw 'found-it d-f-p)))))))
+
+(defun jst-file-belongs-to-project (file-name)
+  "Return t if FILE-NAME is belong to a known project."
+  (stringp (jst-query-project-root-for-file file-name)))
+
+(defun jst-valid-dominating-files ()
+  "Return a list of known dominating files."
+  (-concat (-flatten (jst-query-project-type-all :dominating-files))
+           jst-known-dominating-files))
+
+(defun jst-root-project-dir-for-file (file-name)
+  "Return project root dir for the file named FILE-NAME."
+  (jst-locate-dominating-file file-name (jst-valid-dominating-files)))
+
+(defun jst-type-of-project (root-dir)
+  "Return known type hash of ROOT-DIR, may return nil."
+  (let ((types jst-known-project-types)
+        (similarity-alist nil) (ret-type nil) (max-simi 0.0))
+    (maphash (lambda (type desc)
+               (let ((similarity 0.0) (count 0.0) (have 0.0))
+                 (dolist (maybe (gethash :characteristic desc))
+                   (setq count (1+ count))
+                   (if (jst-dir-has-file root-dir maybe)
+                       (setq have (1+ have))))
+                 (setq similarity (/ have count))
+                 (push (cons type similarity) similarity-alist))) types)
+    (dolist (cell similarity-alist)
+      (if (> (cdr cell) max-simi)
+          (progn
+            (setq max-simi (cdr cell))
+            (setq ret-type (car cell))))) ret-type))
+
+(defun jst-dir-has-file (dir file)
+  "Return true if the file is in the path."
+  (f-exists? (f-expand file dir)))
+
+(defun jst-spec-file-for-file (file-name)
+  "Return spec file for target file FILE-NAME."
+  (let* ((project (jst-query-project-for-file file-name))
+         (tar-to-spec (jst-query-project project :target-to-spec)))
+    (if tar-to-spec
+        (funcall tar-to-spec file-name)
+      (jst-spec-file-for-file-voilently file-name))))
+
+(defun jst-target-file-for-spec (spec-file)
+  "Return target file for spec file SPEC-FILE."
+  (let* ((project (jst-query-project-for-file spec-file))
+         (spec-to-tar (jst-query-project project :spec-to-target)))
+    (if spec-to-tar
+        (funcall spec-to-tar spec-file)
+      (jst-target-file-for-spec-voilently spec-file))))
+
+(defmacro jst-voilently-binding (file-name &rest body)
+  "Used in `jst-spec-file-for-file-voilently' and
+`jst-target-file-for-spec-voilently'."
+  (declare (indent 1) (debug t))
+  `(let* ((project (jst-query-project-for-file ,file-name))
+          (spec-dir (or (jst-query-project project :spec-dir)
+                        (jst-query-project-root-for-file ,file-name)))
+          (source-dir (or (jst-query-project project :source-dir)
+                          (jst-query-project-root-for-file ,file-name)))
+          (common-parent (f-common-parent '(spec-dir source-dir)))
+          (relative-path (f-relative ,file-name common-parent))
+          (pure-name (jst-file-pure-base-name ,file-name)))
+     ,@body))
+
+(defun jst-spec-file-for-file-voilently (file-name)
+  "Find spec file for FILE-NAME, voilently."
+  (jst-voilently-binding file-name
+    (let ((spec-files (jst-spec-files-for-project project)))
+      (setq spec-files
+            (-select (lambda (n) (s-contains? pure-name (f-filename n))) spec-files))
+      (jst-best-match file-name spec-files))))
+
+(defun jst-target-file-for-spec-voilently (spec-file)
+  "Find target file for SPEC-FILE, voilently."
+  (jst-voilently-binding spec-file
+    (let ((src-files (jst-target-files-for-project project)))
+      (setq src-files
+            (-select (lambda (n) (s-contains? pure-name (f-filename n))) src-files))
+      (jst-best-match spec-file src-files))))
+
+(defun jst-best-match (file-name file-list)
+  "Return the best match from FILE-LIST."
+  (catch 'done
+    (if (equal 0 (length file-list))
+        (throw 'done nil))
+    (if (equal 1 (length file-list))
+        (throw 'done (nth 0 file-list)))
+    (let ((similarity-alist nil) (fname-best-matches) (highest 0.0)
+          (pure-name (jst-file-pure-base-name file-name))
+          (path-best-matches nil))
+      ;; Use file name similarity match
+      (dolist (testfile file-list)
+        (push (cons testfile (/ (* 1.0 (length pure-name))
+                                (length (jst-file-pure-base-name testfile))))
+              similarity-alist))
+      (setq highest (-max (jst-cdrs similarity-alist)))
+      (dolist (cell similarity-alist)
+        (if (= (cdr cell) highest)
+            (push (car cell) fname-best-matches)))
+      (if (equal 1 (length fname-best-matches))
+          (throw 'done (nth 0 fname-best-matches)))
+      ;; Use path similarity
+      (setq similarity-alist nil)
+      (setq highest 0.0)
+      (dolist (testfile fname-best-matches)
+        (push (cons testfile (jst-common-path-length testfile file-name))
+              similarity-alist))
+      (setq highest (-max (jst-cdrs similarity-alist)))
+      (dolist (cell similarity-alist)
+        (if (= (cdr cell) highest)
+            (push car cell) path-best-matches))
+      (if (equal 1 (length path-best-matches))
+          (throw 'done (nth 0 path-best-matches))
+        ;; Return randomly maybe suit user's need
+        (throw 'done
+               (nth (random (length path-best-matches)) path-best-matches))))))
+
+(defun jst-cdrs (alist)
+  "Return a list of all cdrs from ALIST."
+  (-map 'cdr alist))
+
+(defun jst-spec-files-for-project (proj)
+  "Return a list of spec files for PROJ."
+  (let (spec-dir)
+    (setq spec-dir (or (jst-query-project proj :spec-dir)
+                       (jst-project-root-for-project proj)))
+    (f-files spec-dir (lambda (file)
+                        (jst-file-is-spec file)) t)))
+
+(defun jst-target-files-for-project (proj)
+  "Return a list of target files for PROJ."
+  (let (src-dir files)
+    (setq src-dir (or (jst-query-project proj :source-dir)
+                      (jst-project-root-for-project proj)))
+    (setq files (f-files src-dir (lambda (file)
+                                   (jst-file-is-js file)) t))
+    (-remove (lambda (f) (jst-file-is-spec f)) files)))
+
+(defun jst-path-depth (path)
+  "Return path depth of PATH. PATH is expanded first."
+  (length (s-split (f-path-separator) (f-expand path) t)))
+
+(defun jst-common-path (file1 file2)
+  "Return common path of full file name FILE1 and FILE2.
+FILE1 and FILE2 will be truncated to very pure form."
+  (setq file1 (s-concat (file-name-directory file1)
+                        (jst-file-pure-base-name file1)))
+  (setq file2 (s-concat (file-name-directory file2)
+                        (jst-file-pure-base-name file2)))
+  (s-shared-end file1 file2))
+
+(defun jst-common-path-length (file1 file2)
+  "Return common path length of full file name FILE1 and FILE2.
+FILE1 and FILE2 will be truncated to very pure form."
+  (jst-path-depth (jst-common-path file1 file2)))
+
+;; Interactive commands
+
+(defun jst-refresh-project-setting (root-dir)
+  "Refresh project setting."
+  (interactive)
+  )
+
 (defun jst-find-spec-file-other-window ()
   "Find the spec file in other window."
   (interactive)
   ;; Use guessing currently
-  (find-file-other-window (jst-guess-spec-file-location (buffer-file-name))))
+  (find-file-other-window (jst-spec-file-for-file (buffer-file-name))))
 
 (defun jst-find-target-file-other-window ()
   "Find the target file in other window."
   (interactive)
   ;; Use guessing currently
-  (find-file-other-window (jst-guess-target-file-location (buffer-file-name))))
+  (find-file-other-window (jst-target-file-for-spec (buffer-file-name))))
 
 (defun jst-enable-appropriate-mode ()
   "Enable appropriate mode for the opened buffer."
   (if (jst-buffer-is-spec) (jst-mode)
     (if (jst-buffer-is-js) (jst-verifiable-mode))))
+
+;; Load some basic data
+
+(jst-remember-language :extension "js" :name "JavaScript")
+(jst-remember-language :extension "es6" :name "ECMA6")
+(jst-remember-language :extension "ts" :name "TypeScript")
+(jst-remember-language :extension "coffee" :name "CoffeeScript")
+(jst-remember-language :extension "ls" :name "LiveScript")
+
+(jst-remember-spec-file-pattern "^.+?\\([_]?\\([sS]pec\\|[tT]est\\)\\)\\.")
+(jst-remember-spec-dir-pattern "\\([sS]pec\\|[tT]est\\)")
+
+(jst-remember-dominating-file ".git")
+(jst-remember-dominating-file jst-project-config-file)
+
+(jst-remember-project-type
+ "rails" :spec-to-target nil :target-to-spec nil
+ :testing-framework "jasmine"
+ :spec-dir "spec/javascripts"
+ :config-file "spec/javascripts/support/jasmine.yml"
+ :source-dir "app/assets/javascripts"
+ :command-ci "bundle exec rake spec:javascript"
+ :command-browser "bundle exec rails s"
+ :characteristic '("config.ru" "app/controllers" "app/assets" "public")
+ :dominating-files '("config.ru" "Gemfile" "Rakefile"))
 
 ;; Key map
 
@@ -168,20 +568,27 @@ values are list of extensions such as ('ls').")
     map)
   "Keymap for `jst-verifiable-mode'.")
 
+;; Mode definition
 
 (define-minor-mode jst-mode
-  "Minor mode for testing javaScript unit test files.
+  "Minor mode for testing javaScrip code.
 
 \\{jst-mode-map}"
   :lighter " JST" :keymap jst-mode-map
-  ;; Do something else
+  (jst-enforce-project-of-file (buffer-file-name))
+  ;; (unless (jst-enforce-project-of-file (buffer-file-name))
+  ;;   (jst-mode -1))
   )
 
 (define-minor-mode jst-verifiable-mode
   "Minor mode for javaScript files that have specs.
 
 \\{jst-verifiable-mode-map}"
-  :lighter "" :keymap jst-verifiable-mode-map)
+  :lighter "" :keymap jst-verifiable-mode-map
+  (jst-enforce-project-of-file (buffer-file-name))
+  ;; (unless (jst-enforce-project-of-file (buffer-file-name))
+  ;;   (jst-verifiable-mode -1))
+  )
 
 (provide 'jst-mode)
 ;;; jst-mode.el ends here
