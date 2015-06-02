@@ -47,14 +47,14 @@
 
 ;; This is currently unused actually
 ;; Unless pcache support custom persistent location for repository
-(defcustom jst-cache-info-file (convert-standard-filename "~/.emacs.d/.jst")
+(defcustom jst-cache-info-file (convert-standard-filename "~/.emacs.d/.jstcache")
   "Default target for storing jst project informatin and type information."
   :group 'jst
   :type '(choice
           (const :tag "Default value is ~/.emacs.d/.jst" nil)
           file))
 
-(defcustom jst-project-config-file ".jst.el"
+(defcustom jst-project-config-file ".jst"
   "The file to dominate a jst project."
   :type 'string
   :group 'jst)
@@ -64,6 +64,9 @@
 keys are language names such as 'LiveScript',
 values are list of extensions such as ('ls').")
 (setq jst-known-langs-and-exts (make-hash-table :test 'equal))
+
+(defvar jst-known-imenu-settings (make-hash-table :test 'equal)
+  "A hash table records known imenu settings.")
 
 (defvar jst-known-spec-file-patterns '()
   "An list records the global spec file patterns.")
@@ -84,6 +87,17 @@ such as \"rails\", values are an complicated object.")
 (defvar jst-pcache-repo (pcache-repository "jst")
   "The pcache-repository object used by jst.")
 
+(defvar-local jst-last-imenu-generic-expression nil
+  "The backup variable for `imenu-generic-expression'.")
+
+(defvar-local jst-last-imenu-create-index nil
+  "The backup variable for `imenu-create-index-function'.")
+
+(defconst jst-default-imenu-generic-expression
+  '((nil "^\\( *\\(x?f?describe\\|x?f?it\\|beforeEach\\|beforeAll\\|\
+afterEach\\|afterAll\\).*\\)$" 1))
+  "The default imenu generic expression.")
+
 (defun jst-remember-language (&rest args)
   "Let JST remember another language."
   (let (label value lang ext)
@@ -95,6 +109,29 @@ such as \"rails\", values are an complicated object.")
     (if (gethash lang jst-known-langs-and-exts)
         (push ext (gethash lang jst-known-langs-and-exts))
       (puthash lang (list ext) jst-known-langs-and-exts))) nil)
+
+(defun jst-remember-imenu-setting (lang &rest args)
+  "Let JST remember another imenu setting."
+  (let (label value gen-expr create-index table)
+    (while (not (= 0 (length args)))
+      (setq label (pop args))
+      (setq value (pop args))
+      (and (equal :gen-expr label) (setq gen-expr value))
+      (and (equal :create-index label) (setq create-index value)))
+    (if (gethash lang jst-known-imenu-settings)
+        (error "Redefine JST imenu setting.")
+      (setq table (make-hash-table :test 'equal))
+      (puthash :gen-expr gen-expr table)
+      (puthash :create-index create-index table)
+      (puthash lang table jst-known-imenu-settings))) nil)
+
+(defun jst-query-imenu-setting (lang &optional key)
+  "Query JST for imenu setting.
+return a hash, if KEY is specified, return a value."
+  (catch 'found-it
+    (let ((table (gethash lang jst-known-imenu-settings)))
+      (unless key (throw 'found-it table))
+      (and table (gethash key table)))))
 
 (defun jst-remember-spec-file-pattern (pattern)
   "Let JST know another spec file pattern."
@@ -157,11 +194,13 @@ return a hash, if KEY is specified, return a value."
 
 (defun jst-serialize-projects ()
   "Serialize loaded projects."
-  (pcache-put jst-pcache-repo 'projects jst-known-projects))
+  (pcache-put jst-pcache-repo 'projects jst-known-projects)
+  (pcache-save jst-pcache-repo))
 
 (defun jst-unserialize-projects ()
   "Unserialize projects and set `jst-known-projects'."
-  (setq jst-known-projects (pcache-get jst-pcache-repo 'projects)))
+  (setq jst-known-projects (or (pcache-get jst-pcache-repo 'projects)
+                               jst-known-projects)))
 
 (defun jst-remember-project (root &rest args)
   "Let JST remember another project."
@@ -187,7 +226,7 @@ return a hash, if KEY is specified, return a value."
       (puthash :testing-framework testing-framework table)
       (puthash :spec-dir spec-dir table)
       (puthash :config-file config-file table)
-      (puthash :source-dir spec-dir table)
+      (puthash :source-dir source-dir table)
       (puthash :command-ci command-ci table)
       (puthash :command-browser command-browser table)
       (puthash :spec-to-target spec-to-target table)
@@ -202,7 +241,8 @@ Sorry for my poor English. Help me improve the words and grammar."
 (defun jst-query-project (root &optional key)
   "Query project with a ROOT directory path."
   (catch 'found-it
-    (let ((table (gethash root jst-known-projects)))
+    (let ((table (if (hash-table-p root) root
+                   (gethash root jst-known-projects))))
       (unless key (throw 'found-it (jst-complete-project-info table)))
       (and table (jst-query-project-key table key)))))
 
@@ -338,8 +378,8 @@ of arguments and can return with the file."
         (if (setq d-f-p
                   (locate-dominating-file path file-name))
             (if with-file
-                (throw 'found-it (expand-file-name file-name d-f-p))
-              (throw 'found-it d-f-p)))))))
+                (throw 'found-it (f-full (f-expand file-name d-f-p)))
+              (throw 'found-it (f-full d-f-p))))))))
 
 (defun jst-file-belongs-to-project (file-name)
   "Return t if FILE-NAME is belong to a known project."
@@ -401,7 +441,7 @@ of arguments and can return with the file."
                         (jst-query-project-root-for-file ,file-name)))
           (source-dir (or (jst-query-project project :source-dir)
                           (jst-query-project-root-for-file ,file-name)))
-          (common-parent (f-common-parent '(spec-dir source-dir)))
+          (common-parent (f-common-parent (list spec-dir source-dir)))
           (relative-path (f-relative ,file-name common-parent))
           (pure-name (jst-file-pure-base-name ,file-name)))
      ,@body))
@@ -452,9 +492,12 @@ of arguments and can return with the file."
       (setq highest (-max (jst-cdrs similarity-alist)))
       (dolist (cell similarity-alist)
         (if (= (cdr cell) highest)
-            (push car cell) path-best-matches))
+            (push (car cell)  path-best-matches)))
       (if (equal 1 (length path-best-matches))
           (throw 'done (nth 0 path-best-matches))
+        ;; Let's test file extension
+        (throw 'done (-find (lambda (f) (not (f-ext? f "js"))) path-best-matches))
+        ;; Unused
         ;; Return randomly maybe suit user's need
         (throw 'done
                (nth (random (length path-best-matches)) path-best-matches))))))
@@ -498,12 +541,60 @@ FILE1 and FILE2 will be truncated to very pure form."
 FILE1 and FILE2 will be truncated to very pure form."
   (jst-path-depth (jst-common-path file1 file2)))
 
+(defun jst-recover-imenu-settings ()
+  "Recover the default imenu generic expression."
+  (setq imenu-generic-expression jst-last-imenu-generic-expression)
+  (setq imenu-create-index-function jst-last-imenu-create-index))
+
+(defun jst-enhance-imenu-settings ()
+  "Set some imenu extras."
+  (let* ((lang (jst-programming-language-of-buffer))
+         (gen-expr (or (jst-query-imenu-setting lang :gen-expr)
+                       jst-default-imenu-generic-expression))
+         (create-index (or (jst-query-imenu-setting lang :create-index)
+                           'imenu-default-create-index-function)))
+    (setq jst-last-imenu-generic-expression imenu-generic-expression)
+    (setq jst-last-imenu-create-index imenu-create-index-function)
+    (make-local-variable 'imenu-generic-expression)
+    (make-local-variable 'imenu-create-index-function)
+    (setq imenu-generic-expression gen-expr)
+    (setq imenu-create-index-function create-index)
+    ))
+
+(defun jst-programming-language-for-file (file-name)
+  "Return the programming language for FILE-NAME."
+  (catch 'found-it
+    (maphash (lambda (k l)
+               (if (-contains? l (f-ext file-name))
+                   (throw 'found-it k))) jst-known-langs-and-exts)))
+
+(defun jst-programming-language-of-buffer (&optional buffer)
+  (jst-programming-language-for-file
+   (buffer-file-name (or buffer (current-buffer)))))
+
 ;; Interactive commands
+
+(defun jst-refresh-current-project-setting ()
+  "Refresh current project setting."
+  (interactive)
+  (jst-refresh-project-setting
+   (jst-query-project-root-for-file (buffer-file-name (current-buffer)))))
 
 (defun jst-refresh-project-setting (root-dir)
   "Refresh project setting."
+  (interactive "D")
+  (if (gethash root-dir jst-known-projects)
+      (remhash root-dir jst-known-projects))
+  (jst-enforce-project-of-file root-dir))
+
+(defun jst-refresh-all-project-setting ()
+  "Refresh all project settings. It will remove project if a project is not
+exist anymore."
   (interactive)
-  )
+  (dolist (proj (hash-table-keys jst-known-projects))
+    (if (f-directory? proj)
+        (jst-refresh-project-setting (root-dir))
+      (remhash proj jst-known-projects))))
 
 (defun jst-find-spec-file-other-window ()
   "Find the spec file in other window."
@@ -530,7 +621,12 @@ FILE1 and FILE2 will be truncated to very pure form."
 (jst-remember-language :extension "coffee" :name "CoffeeScript")
 (jst-remember-language :extension "ls" :name "LiveScript")
 
-(jst-remember-spec-file-pattern "^.+?\\([_]?\\([sS]pec\\|[tT]est\\)\\)\\.")
+(jst-remember-imenu-setting
+ "CoffeeScript"
+ :gen-expr nil
+ :create-index nil)
+
+(jst-remember-spec-file-pattern "^.+?\\([_-]?\\([sS]pec\\|[tT]est\\)\\)\\.")
 (jst-remember-spec-dir-pattern "\\([sS]pec\\|[tT]est\\)")
 
 (jst-remember-dominating-file ".git")
@@ -578,7 +674,9 @@ FILE1 and FILE2 will be truncated to very pure form."
   (jst-enforce-project-of-file (buffer-file-name))
   ;; (unless (jst-enforce-project-of-file (buffer-file-name))
   ;;   (jst-mode -1))
-  )
+  (if jst-mode
+      (jst-enhance-imenu-settings)
+    (jst-recover-imenu-settings)))
 
 (define-minor-mode jst-verifiable-mode
   "Minor mode for javaScript files that have specs.
@@ -589,6 +687,13 @@ FILE1 and FILE2 will be truncated to very pure form."
   ;; (unless (jst-enforce-project-of-file (buffer-file-name))
   ;;   (jst-verifiable-mode -1))
   )
+
+;; Setup hooks
+
+(eval-after-load 'jst-mode
+  (jst-unserialize-projects))
+
+(add-hook 'kill-emacs-hook 'jst-serialize-projects)
 
 (provide 'jst-mode)
 ;;; jst-mode.el ends here
