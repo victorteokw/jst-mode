@@ -145,16 +145,17 @@ return a hash, if KEY is specified, return a value."
   "Let JST remember another project type."
   (let (label value testing-framework spec-dir config-file source-dir
               command-ci command-browser spec-to-target target-to-spec
-              dominating-files table)
+              dominating-files browser-url table)
     (while (not (= 0 (length args)))
       (setq label (pop args))
       (setq value (pop args))
       (and (equal :testing-framework label) (setq testing-framework value))
       (and (equal :spec-dir label) (setq spec-dir value))
-      (and (equal :config-file label) (setq config-file value))
       (and (equal :source-dir label) (setq source-dir value))
+      (and (equal :config-file label) (setq config-file value))
       (and (equal :command-ci label) (setq command-ci value))
       (and (equal :command-browser label) (setq command-browser value))
+      (and (equal :browser-url label) (setq browser-url value))
       (and (equal :spec-to-target label) (setq spec-to-target value))
       (and (equal :target-to-spec label) (setq target-to-spec value))
       (and (equal :dominating-files label) (setq dominating-files value)))
@@ -170,6 +171,7 @@ return a hash, if KEY is specified, return a value."
       (puthash :spec-to-target spec-to-target table)
       (puthash :target-to-spec target-to-spec table)
       (puthash :dominating-files dominating-files table)
+      (puthash :browser-url browser-url table)
       (puthash type table jst-known-project-types))) nil)
 
 (defun jst-query-project-type (type &optional key)
@@ -206,17 +208,18 @@ return a hash, if KEY is specified, return a value."
   "Let JST remember another project."
   (let (label value type testing-framework spec-dir config-file source-dir
               command-ci command-browser spec-to-target target-to-spec
-              table)
+              browser-url table)
     (while (not (= 0 (length args)))
       (setq label (pop args))
       (setq value (pop args))
       (and (equal :type label) (setq type value))
       (and (equal :testing-framework label) (setq testing-framework value))
-      (and (equal :spec-dir label) (setq spec-dir value))
+      (and (equal :spec-dir label) (setq spec-dir (f-expand value root)))
+      (and (equal :source-dir label) (setq source-dir (f-expand value root)))
       (and (equal :config-file label) (setq config-file value))
-      (and (equal :source-dir label) (setq source-dir value))
       (and (equal :command-ci label) (setq command-ci value))
       (and (equal :command-browser label) (setq command-browser value))
+      (and (equal :browser-url label) (setq browser-url value))
       (and (equal :spec-to-target label) (setq spec-to-target value))
       (and (equal :target-to-spec label) (setq target-to-spec value)))
     (if (gethash root jst-known-projects)
@@ -229,6 +232,7 @@ return a hash, if KEY is specified, return a value."
       (puthash :source-dir source-dir table)
       (puthash :command-ci command-ci table)
       (puthash :command-browser command-browser table)
+      (puthash :browser-url browser-url table)
       (puthash :spec-to-target spec-to-target table)
       (puthash :target-to-spec target-to-spec table)
       (puthash root table jst-known-projects))) nil)
@@ -572,6 +576,43 @@ FILE1 and FILE2 will be truncated to very pure form."
   (jst-programming-language-for-file
    (buffer-file-name (or buffer (current-buffer)))))
 
+(defun jst-run-spec-buffer-name (project)
+  "Return the spec buffer name for project. PROJECT can be a project hash or a
+root dir."
+  (if (hash-table-p project)
+      (setq project (jst-hashkey project jst-known-projects)))
+  (concat "*jst-spec-run " (file-name-nondirectory project) " *"))
+
+(defun jst-current-project ()
+  "Return the current project."
+  (jst-query-project (jst-query-project-root-for-file
+                      (buffer-file-name (current-buffer)))))
+
+(defun jst-current-project-root ()
+  "Return the current project root."
+  (jst-hashkey (jst-current-project) jst-known-projects))
+
+(defmacro jst-with-proj-root (body-form)
+  `(let ((default-directory (jst-current-project-root)))
+     ,body-form))
+
+(defun jst-apply-ansi-color ()
+  (ansi-color-apply-on-region compilation-filter-start (point)))
+
+(defun jst-run-spec-terminate ()
+  (let ((process (get-buffer-process (current-buffer))))
+    (when process (signal-process process 15))))
+
+(defun jst-run-spec (browser-or-ci)
+  "Run specs."
+  (let ((jst-buffer-name (jst-run-spec-buffer-name (jst-current-project))))
+    (if (member jst-buffer-name (mapcar 'buffer-name (buffer-list)))
+        (kill-buffer jst-buffer-name))
+    (jst-with-proj-root
+     (compile (or (jst-query-project (jst-current-project) browser-or-ci)
+                  (read-string "Type a command: "))
+              'jst-run-spec-mode))))
+
 ;; Interactive commands
 
 (defun jst-refresh-current-project-setting ()
@@ -607,6 +648,18 @@ exist anymore."
   (interactive)
   ;; Use guessing currently
   (find-file-other-window (jst-target-file-for-spec (buffer-file-name))))
+
+(defun jst-run-spec-ci ()
+  "Run specs with CI."
+  (interactive)
+  (jst-run-spec :command-ci))
+
+(defun jst-run-spec-browser ()
+  "Run specs in browser."
+  (interactive)
+  (jst-run-spec :command-browser)
+  (let ((browser-url (jst-query-project (jst-current-project) :browser-url)))
+    (if browser-url (browse-url browser-url))))
 
 (defun jst-enable-appropriate-mode ()
   "Enable appropriate mode for the opened buffer."
@@ -652,6 +705,17 @@ exist anymore."
   'jst-find-spec-file-other-window)
 (define-key jst-command-map (kbd "b") 'jst-find-target-file-other-window)
 
+(define-key jst-verifiable-command-map (kbd "c")
+  'jst-run-spec-ci)
+(define-key jst-command-map (kbd "c")
+  'jst-run-spec-ci)
+
+(define-key jst-verifiable-command-map (kbd "a")
+  'jst-run-spec-browser)
+(define-key jst-command-map (kbd "a")
+  'jst-run-spec-browser)
+
+
 (defvar jst-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map jst-keymap-prefix 'jst-command-map)
@@ -687,6 +751,13 @@ exist anymore."
   ;; (unless (jst-enforce-project-of-file (buffer-file-name))
   ;;   (jst-verifiable-mode -1))
   )
+
+(define-derived-mode jst-run-spec-mode compilation-mode "JST Run Spec"
+  "Compilation mode for running jst specs used by `jst-mode'."
+  (add-hook 'compilation-filter-hook 'jst-apply-ansi-color nil t)
+  (add-hook 'kill-buffer-hook 'jst-run-spec-terminate t t)
+  (add-hook 'kill-emacs-hook 'jst-run-spec-terminate t t)
+  (setq-local compilation-scroll-output t))
 
 ;; Setup hooks
 
