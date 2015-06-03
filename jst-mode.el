@@ -341,12 +341,14 @@ Return the project if it is defined. Return nil if not defined."
 
 (defun jst-register-project (root-dir)
   "Register project."
-  (let (type spec-dir)
-    (setq type (jst-type-of-project root-dir))
-    (or (jst-query-project-type type :spec-dir)
-        (setq spec-dir (jst-spec-dir-of-root-dir root-dir)))
-    (jst-remember-project root-dir :type type :spec-dir spec-dir)
-    (jst-query-project root-dir)))
+  (catch 'return
+    (unless root-dir (throw 'return nil))
+    (let (type spec-dir)
+      (setq type (jst-type-of-project root-dir))
+      (or (jst-query-project-type type :spec-dir)
+          (setq spec-dir (jst-spec-dir-of-root-dir root-dir)))
+      (jst-remember-project root-dir :type type :spec-dir spec-dir)
+      (jst-query-project root-dir))))
 
 (defun jst-spec-dir-of-root-dir (root-dir)
   "Figure out spec dir given root dir of a project. And it's type is known."
@@ -735,9 +737,8 @@ exist anymore."
 
 \\{jst-mode-map}"
   :lighter " JST" :keymap jst-mode-map
-  (jst-enforce-project-of-file (buffer-file-name))
-  ;; (unless (jst-enforce-project-of-file (buffer-file-name))
-  ;;   (jst-mode -1))
+  (unless (jst-enforce-project-of-file (buffer-file-name))
+    (setq jst-mode nil))
   (if jst-mode
       (jst-enhance-imenu-settings)
     (jst-recover-imenu-settings)))
@@ -747,10 +748,8 @@ exist anymore."
 
 \\{jst-verifiable-mode-map}"
   :lighter "" :keymap jst-verifiable-mode-map
-  (jst-enforce-project-of-file (buffer-file-name))
-  ;; (unless (jst-enforce-project-of-file (buffer-file-name))
-  ;;   (jst-verifiable-mode -1))
-  )
+  (unless (jst-enforce-project-of-file (buffer-file-name))
+    (setq jst-verifiable-mode nil)))
 
 (define-derived-mode jst-run-spec-mode compilation-mode "JST Run Spec"
   "Compilation mode for running jst specs used by `jst-mode'."
