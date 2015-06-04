@@ -239,7 +239,7 @@ Sorry for my poor English. Help me improve the words and grammar."
       (unless key (throw 'found-it (jst-complete-project-info table)))
       (and table (jst-query-project-key table key)))))
 
-(defun jst-query-testing-framework (name &optionals key)
+(defun jst-query-testing-framework (name &optional key)
   "Query testing framework with a NAME and optional KEY."
   (catch 'found-it
     (let ((table (if (hash-table-p name) name
