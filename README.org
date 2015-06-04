@@ -31,7 +31,7 @@ However, you can put the source code in your =.emacs.d= and require it, too.
 
 *** Basic setup
 
-#+BEGIN_EXAMPLE lisp
+#+BEGIN_EXAMPLE elisp
 (add-hook 'js2-mode-hook 'jst-enable-appropriate-mode)
 (add-hook 'coffee-mode-hook 'jst-enable-appropriate-mode)
 ;; (add-hook 'what-ever-js-mode-hook 'jst-enable-appropriate-mode)
@@ -105,7 +105,7 @@ Just let JST-mode know it like this:
 (jst-remember-dominating-file ".darcs")
 #+END_EXAMPLE
 
-** <<Customization>>
+** Customization
 
 Actually, the usage of JST-mode is rather flexible, and you can nearly
 customize everything with the =jst-remember= APIs.
@@ -114,10 +114,11 @@ customize everything with the =jst-remember= APIs.
 
 You can customize the entire key bindings of JST-mode by setting
 =jst-keymap-prefix= a new value. For example:
-=+BEGIN_EXAMPLE elisp
+
+#+BEGIN_EXAMPLE elisp
 ;; Use S-t instead of C-c t.
 (setq jst-keymap-prefix (kbd "S-t"))
-=+END_EXAMPLE
+#+END_EXAMPLE
 
 ** Contributors
 
@@ -136,7 +137,7 @@ This minor mode is new yet, and some features should and will be supported:
 + block navigation inside a file
 + block and spec status toggling.
 
-** <<Improvements>>
+** Improvements
 
 The documentation of the functions may not be well documented and the English
 grammar is a little bit poor.
