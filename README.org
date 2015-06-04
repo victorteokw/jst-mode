@@ -1,0 +1,148 @@
+** Synopsis
+
+*JST-mode* is a minor mode contains a lot of helpers for testing javaScript
+projects. JavaScript projects tend to be varying. There are node command line
+utilities, web application, native application and web javaScript code embed-in
+other programming language applications. Therefore, *JST-mode* tends to be
+omni-compatible. It supports these programming languages:
+
++ JavaScript (.js)
++ ECMA6 (.es6)
++ CoffeeScript (.coffee)
++ TypeScript (.ts)
++ LiveScript (.ls)
+
+It supports these testing frameworks:
+
++ jasmine
++ mocha
+
+** Installation
+
+The recommended way to install JST-mode is via =package.el=.
+
+#+BEGIN_EXAMPLE
+M-x package-install "jst-mode"
+#+END_EXAMPLE
+
+However, you can put the source code in your =.emacs.d= and require it, too.
+
+** Usage
+
+*** Basic setup
+
+#+BEGIN_EXAMPLE lisp
+(add-hook 'js2-mode-hook 'jst-enable-appropriate-mode)
+(add-hook 'coffee-mode-hook 'jst-enable-appropriate-mode)
+;; (add-hook 'what-ever-js-mode-hook 'jst-enable-appropriate-mode)
+#+END_EXAMPLE
+By using this, if JST-mode find a project which the file is belongs to,
+=jst-mode= will be automatically turned on. If JST-mode find the file is
+a verifiable instead of a spec file, =jst-verifiable-mode= will be
+automatically turned on. Otherwise, JST-mode will not be turned on.
+
+*** Toggle between spec files and source files
+
+Using =C-c t b= to toggle between spec file and source file.
+This keybinding runs =jst-find-spec-file-other-window= or
+=jst-find-target-file-other-window=. JST uses related file inference,
+which means given a source file =src/view/listView.ts=,
+among these spec files, =spec/view/listViewTextSpec.ts=,
+=spec/listViewControllerSpec.ts=, =spec/view/listViewSpec.js=,
+=spec/view/listViewSpec.ts=, =spec/view/listViewSpec.ts= will be
+chosen by JST-mode. JST-mode compares file base name, file base
+path, and file extension to inference the correct one, which
+99.99% of the times is your desired file to toggle.
+
+If JST-mode figures out your development framework, it will be
+more intelligent and efficient to find your spec files and source
+files.
+
+*** Run specs
+
+You can run specs the CI way with =C-c t c=, run specs the browser
+way with =C-c t a=. JST-mode infers your testing framework and use
+the correct command to invoke. You can easily customize the spec
+command for any project without affect other projects. See [[Customization]].
+
+*** Imenu extras
+
+After JST-mode is enabled. Imenu will show all your blocks and specs
+definition. You can easily look at the outline of the specs, and navigate to a
+block or spec with imenu.
+
+*** Project declaration
+
+There are a lot of existing application patterns can be recognized by JST-mode.
+But if your project has it's own code structure and naming convensions, you can
+created a .jst file in your project root folder.
+
+This is a one file node js example:
+#+BEGIN_EXAMPLE lisp
+;; This is a one file node js example.
+(jst-declare-project :type "nodejs" :testing-framework "mocha"
+                     :spec-dir nil :source-dir nil :command-ci nil
+                     :command-browser nil :browser-url: nil
+                     :target-to-spec (lambda () "testSuites.js")
+                     :spec-to-target (lambda () "myLib.js"))
+#+END_EXAMPLE
+
+This is a rails application example:
+#+BEGIN_EXAMPLE lisp
+(jst-declare-project :type "rails")
+#+END_EXAMPLE
+And it's not necessary since it uses default rails settings.
+
+*** Use your own javaScript cluster language and testing frameworks
+
+Just let JST-mode know it like this:
+#+BEGIN_EXAMPLE lisp
+;; If you created your own JS cluster language
+(jst-remember-language :extension "qs" :name "MyQScript")
+;; If you name your spec dirs BlaBlaSuite
+(jst-remember-spec-dir-pattern "\\(Suite\\)")
+;; If you are using darcs
+(jst-remember-dominating-file ".darcs")
+#+END_EXAMPLE
+
+** <<Customization>>
+
+Actually, the usage of JST-mode is rather flexible, and you can nearly
+customize everything with the =jst-remember= APIs.
+
+*** Key binding
+
+You can customize the entire key bindings of JST-mode by setting
+=jst-keymap-prefix= a new value. For example:
+=+BEGIN_EXAMPLE elisp
+;; Use S-t instead of C-c t.
+(setq jst-keymap-prefix (kbd "S-t"))
+=+END_EXAMPLE
+
+** Contributors
+
+Here's a [[https://github.com/cheunghy/jst-mode/graphs/contributors][list]]
+of all the people who have contributed to the development of JST-mode.
+
+** Contribution
+
+All contributions are welcome, as long as they don't break anything :-)
+See [[Improvements]].
+** Roadmap
+
+This minor mode is new yet, and some features should and will be supported:
+
++ spec navigation inside a file
++ block navigation inside a file
++ block and spec status toggling.
+
+** <<Improvements>>
+
+The documentation of the functions may not be well documented and the English
+grammar is a little bit poor.
+
+Some functions are not beautiful and elegant.
+
+In a word, any improvements are welcome!
+
+Thank you.
