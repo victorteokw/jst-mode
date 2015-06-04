@@ -22,7 +22,7 @@ It supports these testing frameworks:
 The recommended way to install JST-mode is via =package.el=.
 
 #+BEGIN_EXAMPLE
-M-x package-install "jst-mode"
+M-x package-install "jst"
 #+END_EXAMPLE
 
 However, you can put the source code in your =.emacs.d= and require it, too.
