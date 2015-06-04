@@ -34,6 +34,7 @@
 (require 'dash)
 (require 's)
 (require 'f)
+(require 'cl-lib)
 
 (defgroup jst nil
   "jst mode"
@@ -66,7 +67,9 @@ values are list of extensions such as ('ls').")
 (setq jst-known-langs-and-exts (make-hash-table :test 'equal))
 
 (defvar jst-known-imenu-settings (make-hash-table :test 'equal)
-  "A hash table records known imenu settings.")
+  "A hash table records known imenu settings. Keys are languange names
+remembered by `jst-known-langs-and-exts', values are hashes.
+See `jst-remember-imenu-setting' for more information.")
 
 (defvar jst-known-spec-file-patterns '()
   "An list records the global spec file patterns.")
@@ -77,6 +80,10 @@ values are list of extensions such as ('ls').")
 (defvar jst-known-project-types (make-hash-table :test 'equal)
   "An hash table records known project types, keys are type
 such as \"rails\", values are an complicated object.")
+
+(defvar jst-known-testing-frameworks (make-hash-table :test 'equal)
+  "An hash table records known testing frameworks. Keys are framework
+names such as \"jasmine\", \"mocha\".")
 
 (defvar jst-known-dominating-files '()
   "An list of files that implies project root directory.")
@@ -93,10 +100,45 @@ such as \"rails\", values are an complicated object.")
 (defvar-local jst-last-imenu-create-index nil
   "The backup variable for `imenu-create-index-function'.")
 
+(defconst jst-project-type-and-project-common-keys
+  (list :testing-framework :spec-dir :source-dir :config-file :command-ci
+        :command-browser :spec-to-target :target-to-spec :browser-url)
+  "Common keys of `jst-project-type-keys' and `jst-project-keys'.")
+
+(defconst jst-project-type-keys
+  (append jst-project-type-and-project-common-keys
+          (list :dominating-files :characteristic))
+  "JST project keys.")
+
+(defconst jst-imenu-setting-keys (list :gen-expr :create-index)
+  "Default JST imenu setting keys.")
+
+(defconst jst-project-keys
+  (append jst-project-type-and-project-common-keys (list :type))
+  "Default JST project keys.")
+
+(defconst jst-project-path-keys (list :spec-dir :source-dir :config-file)
+  "JST project path keys.")
+
+(defconst jst-testing-frameworks-keys
+  (list :command-ci :command-browser :browser-url :config-file
+        :keywords :current- :current-))
+
 (defconst jst-default-imenu-generic-expression
   '((nil "^\\( *\\(x?f?describe\\|x?f?it\\|beforeEach\\|beforeAll\\|\
 afterEach\\|afterAll\\).*\\)$" 1))
   "The default imenu generic expression.")
+
+(defmacro jst-remember-keyed (arg1 target-table keys-list exist args)
+  "This macro helps with jst-remember functions."
+  `(if (gethash ,arg1 ,target-table)
+       ,exist
+     (let ((table (make-hash-table :test 'equal))
+           (keys ,keys-list))
+       (cl-loop for (label value) on ,args by #'cddr
+                do (if (-contains? ,keys-list label)
+                       (puthash label value table)))
+       (puthash ,arg1 table ,target-table))))
 
 (defun jst-remember-language (&rest args)
   "Let JST remember another language."
@@ -108,22 +150,14 @@ afterEach\\|afterAll\\).*\\)$" 1))
       (and (equal :name label) (setq lang value)))
     (if (gethash lang jst-known-langs-and-exts)
         (push ext (gethash lang jst-known-langs-and-exts))
-      (puthash lang (list ext) jst-known-langs-and-exts))) nil)
+      (puthash lang (list ext) jst-known-langs-and-exts))))
 
 (defun jst-remember-imenu-setting (lang &rest args)
   "Let JST remember another imenu setting."
-  (let (label value gen-expr create-index table)
-    (while (not (= 0 (length args)))
-      (setq label (pop args))
-      (setq value (pop args))
-      (and (equal :gen-expr label) (setq gen-expr value))
-      (and (equal :create-index label) (setq create-index value)))
-    (if (gethash lang jst-known-imenu-settings)
-        (error "Redefine JST imenu setting.")
-      (setq table (make-hash-table :test 'equal))
-      (puthash :gen-expr gen-expr table)
-      (puthash :create-index create-index table)
-      (puthash lang table jst-known-imenu-settings))) nil)
+  (jst-remember-keyed lang jst-known-imenu-settings
+                      jst-imenu-setting-keys
+                      (error "Redefine JST imenu setting.")
+                      args))
 
 (defun jst-query-imenu-setting (lang &optional key)
   "Query JST for imenu setting.
@@ -143,36 +177,17 @@ return a hash, if KEY is specified, return a value."
 
 (defun jst-remember-project-type (type &rest args)
   "Let JST remember another project type."
-  (let (label value testing-framework spec-dir config-file source-dir
-              command-ci command-browser spec-to-target target-to-spec
-              dominating-files browser-url table)
-    (while (not (= 0 (length args)))
-      (setq label (pop args))
-      (setq value (pop args))
-      (and (equal :testing-framework label) (setq testing-framework value))
-      (and (equal :spec-dir label) (setq spec-dir value))
-      (and (equal :source-dir label) (setq source-dir value))
-      (and (equal :config-file label) (setq config-file value))
-      (and (equal :command-ci label) (setq command-ci value))
-      (and (equal :command-browser label) (setq command-browser value))
-      (and (equal :browser-url label) (setq browser-url value))
-      (and (equal :spec-to-target label) (setq spec-to-target value))
-      (and (equal :target-to-spec label) (setq target-to-spec value))
-      (and (equal :dominating-files label) (setq dominating-files value)))
-    (if (gethash type jst-known-project-types)
-        (error "Redefined JST project type.")
-      (setq table (make-hash-table :test 'equal))
-      (puthash :testing-framework testing-framework table)
-      (puthash :spec-dir spec-dir table)
-      (puthash :config-file config-file table)
-      (puthash :source-dir spec-dir table)
-      (puthash :command-ci command-ci table)
-      (puthash :command-browser command-browser table)
-      (puthash :spec-to-target spec-to-target table)
-      (puthash :target-to-spec target-to-spec table)
-      (puthash :dominating-files dominating-files table)
-      (puthash :browser-url browser-url table)
-      (puthash type table jst-known-project-types))) nil)
+  (jst-remember-keyed type jst-known-project-types
+                      jst-project-type-keys
+                      (error "Redefined JST project type.")
+                      args))
+
+(defun jst-remember-testing-framework (name &rest args)
+  "Let JST remember another testing framework."
+  (jst-remember-keyed name jst-known-testing-frameworks
+                      jst-testing-frameworks-keys
+                      (error "Redefined JST testing framework.")
+                      args))
 
 (defun jst-query-project-type (type &optional key)
   "Query JST for project type. If KEY is not specified,
@@ -206,36 +221,10 @@ return a hash, if KEY is specified, return a value."
 
 (defun jst-remember-project (root &rest args)
   "Let JST remember another project."
-  (let (label value type testing-framework spec-dir config-file source-dir
-              command-ci command-browser spec-to-target target-to-spec
-              browser-url table)
-    (while (not (= 0 (length args)))
-      (setq label (pop args))
-      (setq value (pop args))
-      (and (equal :type label) (setq type value))
-      (and (equal :testing-framework label) (setq testing-framework value))
-      (and (equal :spec-dir label) (setq spec-dir (f-expand value root)))
-      (and (equal :source-dir label) (setq source-dir (f-expand value root)))
-      (and (equal :config-file label) (setq config-file value))
-      (and (equal :command-ci label) (setq command-ci value))
-      (and (equal :command-browser label) (setq command-browser value))
-      (and (equal :browser-url label) (setq browser-url value))
-      (and (equal :spec-to-target label) (setq spec-to-target value))
-      (and (equal :target-to-spec label) (setq target-to-spec value)))
-    (if (gethash root jst-known-projects)
-        (error "Redefined JST project.")
-      (setq table (make-hash-table :test 'equal))
-      (puthash :type type table)
-      (puthash :testing-framework testing-framework table)
-      (puthash :spec-dir spec-dir table)
-      (puthash :config-file config-file table)
-      (puthash :source-dir source-dir table)
-      (puthash :command-ci command-ci table)
-      (puthash :command-browser command-browser table)
-      (puthash :browser-url browser-url table)
-      (puthash :spec-to-target spec-to-target table)
-      (puthash :target-to-spec target-to-spec table)
-      (puthash root table jst-known-projects))) nil)
+  (jst-remember-keyed root jst-known-projects
+                      jst-project-keys
+                      (error "Redefined JST project.")
+                      args))
 
 (defun jst-declare-project (&rest args)
   "This function is aim to be used in project root directory.
@@ -249,6 +238,14 @@ Sorry for my poor English. Help me improve the words and grammar."
                    (gethash root jst-known-projects))))
       (unless key (throw 'found-it (jst-complete-project-info table)))
       (and table (jst-query-project-key table key)))))
+
+(defun jst-query-testing-framework (name &optionals key)
+  "Query testing framework with a NAME and optional KEY."
+  (catch 'found-it
+    (let ((table (if (hash-table-p name) name
+                   (gethash name jst-known-testing-frameworks))))
+      (unless name (throw 'found-it (jst-complete-testing-framework-info table)))
+      (and table (gethash key table)))))
 
 (defun jst-query-project-for-file (file-name &optional key)
   "Query project with a file name."
@@ -266,17 +263,26 @@ Sorry for my poor English. Help me improve the words and grammar."
           (throw 'found-it key)))))
 
 (defun jst-complete-project-info (proj)
-  "Given a project table, complete it with default project type settings."
+  "Given a project table, complete it with default project type settings and
+absolute directories."
   (catch 'return
     (unless proj (throw 'return proj))
     (unless (gethash "type" proj) (throw 'return proj))
     (let* ((typen (gethash "type" proj))
            (typed (gethash typen jst-known-project-types))
+           (root (jst-hashkey proj))
            (proj (copy-hash-table proj)))
       (maphash (lambda (key value)
                  (unless (gethash key proj)
                    (puthash key value proj))
-                 ) typed))) proj)
+                 ) typed)
+      (jst-apply-full-path-for-proj proj root))) proj)
+
+(defun jst-apply-full-path-for-proj (proj root)
+  "Make all relative paths full path."
+  (dolist (key jst-project-path-keys)
+    (if (gethash key proj)
+        (puthash key (f-expand (gethash key proj) root) proj))))
 
 (defun jst-query-project-key (proj key)
   "Return key's value of project, type is being considerated."
@@ -615,7 +621,53 @@ root dir."
                   (read-string "Type a command: "))
               'jst-run-spec-mode))))
 
+(defun jst-current-testing-framework ()
+  "Return the used testing framework of current project."
+  (jst-query-testing-framework
+   (jst-query-project (jst-current-project) :testing-framework)))
+
 ;; Interactive commands
+
+(defun jst-toggle-current-spec ()
+  "Toggle current spec according to current testing framework."
+  (interactive)
+
+  ) ;; TODO
+
+(defun jst-toggle-current-block ()
+  "Toggle current block according to current testing framework."
+  (interactive)
+  ) ;; TODO
+
+(defun jst-verify-current-block ()
+  "Verify current block."
+  (interactive)
+  ) ;; TODO
+
+(defun jst-verify-current-spec ()
+  "Verify current spec."
+  (interactive)
+  ) ;; TODO
+
+(defun jst-move-next-spec ()
+  "Move to next spec."
+  (interactive)
+  ) ;; TODO
+
+(defun jst-move-previous-spec ()
+  "move to previous spec."
+  (interactive)
+  ) ;; TODO
+
+(defun jst-move-next-block ()
+  "move to previous block."
+  (interactive)
+  ) ;; TODO
+
+(defun jst-move-previous-block ()
+  "move to previous block."
+  (interactive)
+  ) ;; TODO
 
 (defun jst-refresh-current-project-setting ()
   "Refresh current project setting."
@@ -642,13 +694,11 @@ exist anymore."
 (defun jst-find-spec-file-other-window ()
   "Find the spec file in other window."
   (interactive)
-  ;; Use guessing currently
   (find-file-other-window (jst-spec-file-for-file (buffer-file-name))))
 
 (defun jst-find-target-file-other-window ()
   "Find the target file in other window."
   (interactive)
-  ;; Use guessing currently
   (find-file-other-window (jst-target-file-for-spec (buffer-file-name))))
 
 (defun jst-run-spec-ci ()

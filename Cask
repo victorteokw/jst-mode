@@ -6,3 +6,4 @@
 (depends-on "s")
 (depends-on "pcache")
 (depends-on "f")
+(depends-on "cl-lib")
