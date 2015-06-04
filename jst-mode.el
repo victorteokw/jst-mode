@@ -270,7 +270,7 @@ absolute directories."
     (unless (gethash "type" proj) (throw 'return proj))
     (let* ((typen (gethash "type" proj))
            (typed (gethash typen jst-known-project-types))
-           (root (jst-hashkey proj))
+           (root (jst-hashkey proj jst-known-projects))
            (proj (copy-hash-table proj)))
       (maphash (lambda (key value)
                  (unless (gethash key proj)
@@ -688,7 +688,7 @@ exist anymore."
   (interactive)
   (dolist (proj (hash-table-keys jst-known-projects))
     (if (f-directory? proj)
-        (jst-refresh-project-setting (root-dir))
+        (jst-refresh-project-setting proj)
       (remhash proj jst-known-projects))))
 
 (defun jst-find-spec-file-other-window ()
