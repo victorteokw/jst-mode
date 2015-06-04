@@ -5,7 +5,7 @@
 ;; Author: Cheung Hoi Yu <yeannylam@gmail.com>
 ;; Version: 0.0.1
 ;; Keywords: js, javascript, jasmine, coffee, coffeescript
-;; Package-Requires: ((s "1.9") (f "0.17") (dash "2.10") (pcache "0.3"))
+;; Package-Requires: ((s "1.9") (f "0.17") (dash "2.10") (pcache "0.3") (emacs "24.4"))
 ;; URL: https://github.com/cheunghy/jst-mode
 
 ;; This file is not part of GNU Emacs.
@@ -246,6 +246,10 @@ Sorry for my poor English. Help me improve the words and grammar."
                    (gethash name jst-known-testing-frameworks))))
       (unless name (throw 'found-it (jst-complete-testing-framework-info table)))
       (and table (gethash key table)))))
+
+(defun jst-complete-testing-framework-info (table)
+  ""
+  table) ;; TODO
 
 (defun jst-query-project-for-file (file-name &optional key)
   "Query project with a file name."
@@ -753,18 +757,18 @@ exist anymore."
 (define-prefix-command 'jst-verifiable-command-map)
 (define-prefix-command 'jst-command-map)
 
-(define-key jst-verifiable-command-map (kbd "b")
+(define-key 'jst-verifiable-command-map (kbd "b")
   'jst-find-spec-file-other-window)
-(define-key jst-command-map (kbd "b") 'jst-find-target-file-other-window)
+(define-key 'jst-command-map (kbd "b") 'jst-find-target-file-other-window)
 
-(define-key jst-verifiable-command-map (kbd "c")
+(define-key 'jst-verifiable-command-map (kbd "c")
   'jst-run-spec-ci)
-(define-key jst-command-map (kbd "c")
+(define-key 'jst-command-map (kbd "c")
   'jst-run-spec-ci)
 
-(define-key jst-verifiable-command-map (kbd "a")
+(define-key 'jst-verifiable-command-map (kbd "a")
   'jst-run-spec-browser)
-(define-key jst-command-map (kbd "a")
+(define-key 'jst-command-map (kbd "a")
   'jst-run-spec-browser)
 
 
