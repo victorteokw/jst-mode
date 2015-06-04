@@ -1,4 +1,4 @@
-;;; jst-mode.el --- JS test mode
+;;; jst.el --- JS test mode
 
 ;; Copyright (C) 2015 Cheung Hoi Yu
 
@@ -819,5 +819,5 @@ exist anymore."
 
 (add-hook 'kill-emacs-hook 'jst-serialize-projects)
 
-(provide 'jst-mode)
-;;; jst-mode.el ends here
+(provide 'jst)
+;;; jst.el ends here
